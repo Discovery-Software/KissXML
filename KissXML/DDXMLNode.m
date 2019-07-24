@@ -4,6 +4,7 @@
 #import <libxml/xpath.h>
 #import <libxml/xpathInternals.h>
 
+
 #if ! __has_feature(objc_arc)
 #warning This file must be compiled with ARC. Use -fobjc-arc flag (or convert project to ARC).
 #endif
@@ -29,6 +30,7 @@
 @implementation DDXMLNode
 
 static void MyErrorHandler(void * userData, xmlErrorPtr error);
+static DDXMLNodeKind DDXMLNodeKindForXmlKind(xmlElementType type);
 
 #if DDXML_DEBUG_MEMORY_ISSUES
 
@@ -393,7 +395,7 @@ static void MarkDeath(void *xmlPtr, DDXMLNode *wrapper);
 #endif
 	
 	if (genericPtr != NULL)
-		return genericPtr->type;
+		return DDXMLNodeKindForXmlKind(genericPtr->type);
 	else
 		return DDXMLInvalidKind;
 }
@@ -1172,26 +1174,30 @@ static void MarkDeath(void *xmlPtr, DDXMLNode *wrapper);
 	
 	if (dumpCnt < 0)
 	{
-		return nil;
+		return @"";
 	}
+    
+    NSMutableString *xmlString;
 	
 	if ([self kind] == DDXMLTextKind)
 	{
-		NSString *result = [NSString stringWithUTF8String:(const char *)bufferPtr->content];
+		xmlString = [NSMutableString stringWithUTF8String:(const char *)bufferPtr->content];
 		
 		xmlBufferFree(bufferPtr);
-		
-		return result;
 	}
 	else
 	{
-		NSMutableString *resTmp = [NSMutableString stringWithUTF8String:(const char *)bufferPtr->content];
-		CFStringTrimWhitespace((__bridge CFMutableStringRef)resTmp);
+		xmlString = [NSMutableString stringWithUTF8String:(const char *)bufferPtr->content];
+		CFStringTrimWhitespace((__bridge CFMutableStringRef)xmlString);
 		
 		xmlBufferFree(bufferPtr);
-		
-		return [resTmp copy];
 	}
+    
+    // Revert wide unicode characters in XML Attribute string values
+    // being converted to XML Hex by libXML
+    CFRange range = CFRangeMake(0, CFStringGetLength((__bridge CFMutableStringRef)xmlString));
+    CFStringTransform((__bridge CFMutableStringRef)xmlString, &range, kCFStringTransformToXMLHex, 1);
+    return [xmlString stringByReplacingOccurrencesOfString:@"\\N" withString:@""];
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1976,6 +1982,37 @@ static void MyErrorHandler(void * userData, xmlErrorPtr error)
 	}
 }
 
+static DDXMLNodeKind DDXMLNodeKindForXmlKind(xmlElementType type) {
+    switch (type) {
+        case XML_DOCUMENT_NODE:
+            return DDXMLDocumentKind;
+        case XML_ELEMENT_NODE:
+            return DDXMLElementKind;
+        case XML_ATTRIBUTE_NODE:
+            return DDXMLAttributeKind;
+        case XML_NAMESPACE_DECL:
+            return DDXMLNamespaceKind;
+        case XML_PI_NODE:
+            return DDXMLProcessingInstructionKind;
+        case XML_COMMENT_NODE:
+            return DDXMLCommentKind;
+        case XML_TEXT_NODE:
+            return DDXMLTextKind;
+        case XML_DTD_NODE:
+            return DDXMLDTDKind;
+        case XML_ENTITY_DECL:
+            return DDXMLEntityDeclarationKind;
+        case XML_ATTRIBUTE_DECL:
+            return DDXMLAttributeDeclarationKind;
+        case XML_ELEMENT_DECL:
+            return DDXMLElementDeclarationKind;
+        case XML_NOTATION_NODE:
+            return DDXMLNotationDeclarationKind;
+        default:
+            return DDXMLInvalidKind;
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #pragma mark Zombie Tracking
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2174,7 +2211,7 @@ BOOL DDXMLIsZombie(void *xmlPtr, DDXMLNode *wrapper)
  * Returns a DDXML wrapper object for the given primitive node.
  * The given node MUST be non-NULL and of the proper type.
 **/
-+ (id)nodeWithNsPrimitive:(xmlNsPtr)ns nsParent:(xmlNodePtr)parent owner:(DDXMLNode *)owner
++ (instancetype)nodeWithNsPrimitive:(xmlNsPtr)ns nsParent:(xmlNodePtr)parent owner:(DDXMLNode *)owner
 {
 	return [[DDXMLNamespaceNode alloc] initWithNsPrimitive:ns nsParent:parent owner:owner];
 }
@@ -2183,7 +2220,7 @@ BOOL DDXMLIsZombie(void *xmlPtr, DDXMLNode *wrapper)
  * Returns a DDXML wrapper object for the given primitive node.
  * The given node MUST be non-NULL and of the proper type.
 **/
-- (id)initWithNsPrimitive:(xmlNsPtr)ns nsParent:(xmlNodePtr)parent owner:(DDXMLNode *)inOwner
+- (instancetype)initWithNsPrimitive:(xmlNsPtr)ns nsParent:(xmlNodePtr)parent owner:(DDXMLNode *)inOwner
 {
 	if ((self = [super initWithPrimitive:(xmlKindPtr)ns owner:inOwner]))
 	{
@@ -2192,7 +2229,7 @@ BOOL DDXMLIsZombie(void *xmlPtr, DDXMLNode *wrapper)
 	return self;
 }
 
-+ (id)nodeWithPrimitive:(xmlKindPtr)kindPtr owner:(DDXMLNode *)owner
++ (instancetype)nodeWithPrimitive:(xmlKindPtr)kindPtr owner:(DDXMLNode *)owner
 {
 	// Promote initializers which use proper parameter types to enable compiler to catch more mistakes.
 	NSAssert(NO, @"Use nodeWithNsPrimitive:nsParent:owner:");
@@ -2200,7 +2237,7 @@ BOOL DDXMLIsZombie(void *xmlPtr, DDXMLNode *wrapper)
 	return nil;
 }
 
-- (id)initWithPrimitive:(xmlKindPtr)kindPtr owner:(DDXMLNode *)inOwner
+- (instancetype)initWithPrimitive:(xmlKindPtr)kindPtr owner:(DDXMLNode *)inOwner
 {
 	// Promote initializers which use proper parameter types to enable compiler to catch more mistakes.
 	NSAssert(NO, @"Use initWithNsPrimitive:nsParent:owner:");
@@ -2508,18 +2545,18 @@ BOOL DDXMLIsZombie(void *xmlPtr, DDXMLNode *wrapper)
 
 @implementation DDXMLAttributeNode
 
-+ (id)nodeWithAttrPrimitive:(xmlAttrPtr)attr owner:(DDXMLNode *)owner
++ (instancetype)nodeWithAttrPrimitive:(xmlAttrPtr)attr owner:(DDXMLNode *)owner
 {
 	return [[DDXMLAttributeNode alloc] initWithAttrPrimitive:attr owner:owner];
 }
 
-- (id)initWithAttrPrimitive:(xmlAttrPtr)attr owner:(DDXMLNode *)inOwner
+- (instancetype)initWithAttrPrimitive:(xmlAttrPtr)attr owner:(DDXMLNode *)inOwner
 {
 	self = [super initWithPrimitive:(xmlKindPtr)attr owner:inOwner];
 	return self;
 }
 
-+ (id)nodeWithPrimitive:(xmlKindPtr)kindPtr owner:(DDXMLNode *)owner
++ (instancetype)nodeWithPrimitive:(xmlKindPtr)kindPtr owner:(DDXMLNode *)owner
 {
 	// Promote initializers which use proper parameter types to enable compiler to catch more mistakes.
 	NSAssert(NO, @"Use nodeWithAttrPrimitive:nsParent:owner:");
@@ -2527,7 +2564,7 @@ BOOL DDXMLIsZombie(void *xmlPtr, DDXMLNode *wrapper)
 	return nil;
 }
 
-- (id)initWithPrimitive:(xmlKindPtr)kindPtr owner:(DDXMLNode *)inOwner
+- (instancetype)initWithPrimitive:(xmlKindPtr)kindPtr owner:(DDXMLNode *)inOwner
 {
 	// Promote initializers which use proper parameter types to enable compiler to catch more mistakes.
 	NSAssert(NO, @"Use initWithAttrPrimitive:nsParent:owner:");
@@ -2795,7 +2832,7 @@ BOOL DDXMLIsZombie(void *xmlPtr, DDXMLNode *wrapper)
 }
 
 - (void)setObjectValue:(id)value { }
-- (id)objectValue {
+- (instancetype)objectValue {
 	return nil;
 }
 
